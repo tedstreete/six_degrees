@@ -1,0 +1,23 @@
+[package]
+name = "six_degrees"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4"
+env_logger = "0.9.0"
+lazy_static = "1.4"
+home = "0.5"
+reqwest = { version = "0.11", features = ["blocking", "gzip"] }
+#tokio = { version = "1", features = ["full"] }
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+structopt = "0.3"
+#urlencoding = "2.1"
+
+[dev-dependencies]
+#httpmock = "0.5.7"
+#tiny_http = "0.8"
