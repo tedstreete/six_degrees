@@ -8,13 +8,7 @@ extern crate serde_derive;
 mod fetch;
 mod opt;
 
-use std::{
-    env,
-    io::Write,
-    path::{Path, PathBuf},
-    sync::mpsc,
-    thread, time,
-};
+use std::env;
 
 fn main() {
     env::set_var("RUST_LOG", "six_degrees=trace");
@@ -22,4 +16,8 @@ fn main() {
 
     info!("Getting {} pages deep", opt::OPT.get_depth());
     info!("Caching to {}", opt::OPT.get_cache().to_string_lossy());
+
+    //let page = fetch::get_page_from("Critical psychology").unwrap();
+    // let page = fetch::get_page_from("Rail transport").unwrap();
+    //trace!("{:?}", page);
 }
