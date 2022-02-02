@@ -92,6 +92,8 @@ lazy_static! {
     };
 }
 
+static PARSE_ERROR: &'static str = "Unknown wikipedia payload";
+
 // ***********************************************************************************************
 
 // JSON used on Wikipedia response
@@ -119,6 +121,42 @@ struct Page {
     parse: Links,
 }
 
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct MaxLagFrame {
+    code: String,
+    info: String,
+    host: String,
+    lag: f32,
+    #[serde(rename = "type")]
+    maxlag_type: String,
+    #[serde(rename = "*")]
+    notes: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct MaxLagError {
+    error: MaxLagFrame,
+    servedby: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct MisssingTitleFrame {
+    code: String,
+    info: String,
+    #[serde(rename = "*")]
+    notes: String,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct MissingTitleError {
+    error: MisssingTitleFrame,
+    servedby: String,
+}
+
 // ***********************************************************************************************
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -139,9 +177,9 @@ pub enum FetchError {
     IO(std::io::Error),
     Reqwest(reqwest::Error),
     Http(reqwest::StatusCode),
-    Lag(String),
-    PageNotFound(String),
-    Parse(serde_json::Error),
+    Lag(f32),
+    MissingTitle,
+    Parse(String),
 }
 
 impl fmt::Display for FetchError {
@@ -151,7 +189,7 @@ impl fmt::Display for FetchError {
             FetchError::Reqwest(io_error) => io_error.to_string(),
             FetchError::Http(status_code) => status_code.as_str().to_string(),
             FetchError::Lag(message) => message.to_string(),
-            FetchError::PageNotFound(message) => message.to_string(),
+            FetchError::MissingTitle => "Missing title".to_string(),
             FetchError::Parse(parse_error_) => parse_error_.to_string(),
         };
         write!(f, "{}", err_msg)
@@ -170,12 +208,6 @@ impl From<reqwest::Error> for FetchError {
     }
 }
 
-impl From<serde_json::Error> for FetchError {
-    fn from(error: serde_json::Error) -> Self {
-        FetchError::Parse(error)
-    }
-}
-
 /* *****************************************************************************************************************
  *
  * Parse page
@@ -183,16 +215,32 @@ impl From<serde_json::Error> for FetchError {
  * *****************************************************************************************************************/
 
 pub fn parse(payload: &str) -> Result<FetchEntry, FetchError> {
-    match parse_for_links_from(payload) {
-        Ok(fetchEntry) => Ok(fetchEntry),
-        Err(_) => parse_for_error_from(payload),
+    let parsed: Result<Page, serde_json::Error> = serde_json::from_str(&payload);
+    if let Ok(parsed) = parsed {
+        trace!("fetch::parse: Parsed page: {}", &parsed.parse.title);
+        return extract_links_from(parsed);
     }
+
+    let maxlag: Result<MaxLagError, serde_json::Error> = serde_json::from_str(&payload);
+    if let Ok(lag) = maxlag {
+        let lag_value = lag.error.lag;
+        trace!("fetch::parse: Received maxlag of {} sec", lag_value);
+        return Err(FetchError::Lag(lag_value));
+    }
+
+    let missing_title: Result<MissingTitleError, serde_json::Error> =
+        serde_json::from_str(&payload);
+    if let Ok(message) = missing_title {
+        trace!("fetch::parse: Received Missing Title");
+        return Err(FetchError::MissingTitle);
+    }
+
+    error!("fetch::parse: Unknown wikipedia payload: {}", payload);
+    return Err(FetchError::Parse(String::from(PARSE_ERROR)));
 }
 
-fn parse_for_links_from(payload: &str) -> Result<FetchEntry, FetchError> {
-    let page: Page = serde_json::from_str(&payload)?;
-
-    let outbound: Vec<String> = page
+fn extract_links_from(parsed: Page) -> Result<FetchEntry, FetchError> {
+    let outbound: Vec<String> = parsed
         .parse
         .links
         .into_iter()
@@ -200,16 +248,12 @@ fn parse_for_links_from(payload: &str) -> Result<FetchEntry, FetchError> {
         .map(|link| link.title)
         .collect();
 
-    let digest = FetchEntry::get_digest(&page.parse.title);
+    let digest = FetchEntry::get_digest(&parsed.parse.title);
     Ok(FetchEntry {
         digest,
-        title: page.parse.title,
+        title: parsed.parse.title,
         outbound,
     })
-}
-
-fn parse_for_error_from(payload: &str) -> Result<FetchEntry, FetchError> {
-    Err(FetchError::Lag(String::from("Placeholder")))
 }
 
 /* *****************************************************************************************************************
@@ -223,9 +267,36 @@ mod tests {
     use super::*;
 
     #[test]
-    #[should_panic]
+    fn parse_missing_title() {
+        let parsed = parse(MISSING_TITLE).err();
+
+        if let FetchError::MissingTitle = parsed.unwrap() {
+            assert!(true);
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
+    fn parse_maxlag() {
+        let parsed = parse(MAXLAG_PAGE).err();
+
+        if let FetchError::Lag(lag) = parsed.unwrap() {
+            assert_eq!(lag, 0.596);
+        } else {
+            assert!(false)
+        }
+    }
+
+    #[test]
     fn parse_fail() {
-        let _ = parse(FAIL_PAGE).unwrap();
+        let parsed = parse(FAIL_PAGE).err();
+
+        if let FetchError::Parse(message) = parsed.unwrap() {
+            assert_eq!(message, String::from(PARSE_ERROR));
+        } else {
+            assert!(false)
+        }
     }
 
     #[test]
@@ -240,6 +311,8 @@ mod tests {
         assert_eq!(entry.outbound[0], "Adolescent cliques");
         assert_eq!(entry.outbound[1], "Assortative mixing");
     }
+
+    // ***********************************************************************************************
 
     const SUCCESS_PAGE: &str = r###"{
 	"parse": {
@@ -277,17 +350,40 @@ mod tests {
 "###;
 
     const FAIL_PAGE: &str = r###"{
-	"invalid": {
-		"title": "Value network",
-		"pageid": 1614337,
-		"links": [
-			{
-				"ns": 0,
-				"exists": "",
-				"*": "Adolescent cliques"
-			}
-		]
-	}
-}
+        "invalid": {
+            "title": "Value network",
+            "pageid": 1614337,
+            "links": [
+                {
+                    "ns": 0,
+                    "exists": "",
+                    "*": "Adolescent cliques"
+                }
+            ]
+        }
+    }
+"###;
+
+    const MAXLAG_PAGE: &str = r###"{
+        "error": {
+            "code": "maxlag",
+            "info": "Waiting for 10.64.48.58: 0.596932 seconds lagged.",
+            "host": "10.64.48.58",
+            "lag": 0.596,
+            "type": "db",
+            "*": "See https://www.mediawiki.org/w/api.php for API usage. Subscribe to the mediawiki-api-announce mailing list at &lt;https://lists.wikimedia.org/postorius/lists/mediawiki-api-announce.lists.wikimedia.org/&gt; for notice of API deprecations and breaking changes."
+        },
+        "servedby": "mw1359"
+    }
+"###;
+
+    const MISSING_TITLE: &str = r###"{
+        "error": {
+            "code": "missingtitle",
+            "info": "The page you specified doesn't exist.",
+            "*": "See https://en.wikipedia.org/w/api.php for API usage. Subscribe to the mediawiki-api-announce mailing list at &lt;https://lists.wikimedia.org/mailman/listinfo/mediawiki-api-announce&gt; for notice of API deprecations and breaking changes."
+        },
+        "servedby": "mw1316"
+    }
 "###;
 }
