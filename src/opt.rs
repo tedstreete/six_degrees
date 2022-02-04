@@ -4,7 +4,11 @@
  *
  *************************************************************************************************/
 
-use std::path::{Path, PathBuf};
+use reqwest::Url;
+use std::{
+    cmp::{max, min},
+    path::PathBuf,
+};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -20,15 +24,25 @@ pub struct Opt {
     )]
     cache: PathBuf,
 
-    // Directory to hold cache files
+    // Depth of wikipedia hierarchy to return
     #[structopt(
         short,
         long,
         help = "Depth of hierarchy",
-        long_help = "The depth of the hierarchy below the requested page. 1 = the requested page only; 2 = the requested page, plus all those directly referenced by that page, etc. The maximum depth is 6",
+        long_help = "The depth of the hierarchy below the requested page that will be returned. 1 = the requested page only; 2 = the requested page, plus all those directly referenced by that page, etc. The maximum depth is 6",
         default_value = "2"
     )]
     depth: u32,
+
+    // Domain name for wikipedia API URL
+    // URLs are defined at https://www.mediawiki.org/wiki/API:Main_page
+    #[structopt(
+        short = "n",
+        long = "domain_name",
+        help = "Domain name for wikipedia API URL",
+        default_value = "https://en.wikipedia.org/"
+    )]
+    domain_name: String,
 
     // Port on which the API should be presented
     #[structopt(
@@ -66,9 +80,12 @@ impl Opt {
         }
     }
     pub fn get_depth(&self) -> u32 {
-        self.depth
+        max(1, min(self.depth, 6))
     }
     pub fn get_port(&self) -> u32 {
         self.port
+    }
+    pub fn get_domain_name(&self) -> &str {
+        &self.domain_name
     }
 }

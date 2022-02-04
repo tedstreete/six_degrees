@@ -68,9 +68,15 @@
  *
  *************************************************************************************************/
 
-//use crate::opt;
-use reqwest::{blocking, header::HeaderValue};
-use std::{fmt, io};
+use reqwest::{blocking, header::HeaderValue, StatusCode, Url};
+use std::{
+    fmt,
+    fs::{self, create_dir_all},
+    io,
+    path::PathBuf,
+};
+
+use crate::opt;
 
 lazy_static! {
     static ref ATTRIBUTES_FOR_PAGE: Vec<(&'static str, &'static str)> = {
@@ -90,8 +96,14 @@ lazy_static! {
             .build()
             .expect("Internal error creating fetch::client")
     };
+    static ref URL: String = {
+        let mut url = opt::OPT.get_domain_name().to_string();
+        url.push_str(PATH);
+        url
+    };
 }
 
+static PATH: &'static str = "/w/api.php";
 static PARSE_ERROR: &'static str = "Unknown wikipedia payload";
 
 // ***********************************************************************************************
@@ -210,11 +222,94 @@ impl From<reqwest::Error> for FetchError {
 
 /* *****************************************************************************************************************
  *
+ * Get a page from Wikipedia or local cache
+ *
+ * NOTE: Not tested by unit tests
+ *
+ *******************************************************************************************************************/
+
+pub fn get_page_from(page: &str) -> Result<FetchEntry, FetchError> {
+    let title = page.trim();
+    let path_to_page = get_cache_directory_from(&title);
+
+    let mut exists = false;
+    if let Ok(path) = &path_to_page {
+        exists = path.exists();
+    };
+
+    let fetch = {
+        if exists {
+            info!(r#"Found page "{}" in local cache"#, title);
+            fs::read_to_string(path_to_page.as_ref().unwrap())?
+        } else {
+            info!(r#"Pulling page "{}" from Wikipedia"#, title);
+            let fetch = fetch_page(&URL, title)?;
+            if let Ok(path) = &path_to_page {
+                match fs::write(path, &fetch) {
+                    Ok(_) => info!("Saved {:?} to cache", path.as_os_str()),
+                    Err(_) => info!("Failed to save {:?} to cache", path.as_os_str()),
+                }
+            }
+            fetch
+        }
+    };
+
+    parse(&fetch)
+}
+
+fn get_cache_directory_from(title: &str) -> Result<PathBuf, io::Error> {
+    let title_digest = FetchEntry::get_digest(title);
+
+    let mut path_to_page = opt::OPT.get_cache();
+    path_to_page.push(format!("{:02x?}", title_digest[2]));
+    path_to_page.push(format!("{:02x?}", title_digest[1]));
+    path_to_page.push(format!("{:02x?}", title_digest[0]));
+    create_dir_all(&path_to_page)?;
+    path_to_page.push(title);
+    path_to_page.set_extension("json");
+    Ok(path_to_page)
+}
+
+fn fetch_page(root_url: &str, title: &str) -> Result<String, FetchError> {
+    let url = build_url(root_url, title);
+    let response = reqwest::blocking::get(url.as_str())?;
+    let status = response.status();
+    let links = match status {
+        StatusCode::OK => Ok(response.text()?),
+        _ => {
+            info!(
+                "fetch::fetch_page: Reqwest returned status code: {}",
+                status.to_string()
+            );
+            Err(FetchError::Http(status))
+        }
+    };
+    links
+}
+
+fn build_url(root_url: &str, title: &str) -> Url {
+    // TODO: encode title into query encoding if necessary (the Url crate may map this correctly - need to check for accented characters etc.)
+    let api = Url::parse_with_params(
+        root_url,
+        &[
+            ("action", "parse"),
+            ("format", "json"),
+            ("page", title),
+            ("prop", "links"),
+        ],
+    )
+    .unwrap();
+
+    api
+}
+
+/* *****************************************************************************************************************
+ *
  * Parse page
  *
  * *****************************************************************************************************************/
 
-pub fn parse(payload: &str) -> Result<FetchEntry, FetchError> {
+fn parse(payload: &str) -> Result<FetchEntry, FetchError> {
     let parsed: Result<Page, serde_json::Error> = serde_json::from_str(&payload);
     if let Ok(parsed) = parsed {
         trace!("fetch::parse: Parsed page: {}", &parsed.parse.title);
@@ -265,6 +360,7 @@ fn extract_links_from(parsed: Page) -> Result<FetchEntry, FetchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use httpmock::prelude::*;
 
     #[test]
     fn parse_missing_title() {
@@ -310,6 +406,28 @@ mod tests {
         assert_eq!(entry.outbound.len(), 2);
         assert_eq!(entry.outbound[0], "Adolescent cliques");
         assert_eq!(entry.outbound[1], "Assortative mixing");
+    }
+
+    #[test]
+    fn fetch_success() {
+        // External url "https://en.wikipedia.org/w/api.php?action=parse&format=json&page=Value+network&prop=links"
+        // Will use the url "<server>:<port>?action=parse&format=json&page=Value+network&prop=links"
+
+        let server = MockServer::start();
+        let ms = server.mock(|when, then| {
+            when.path(PATH)
+                .query_param("action", "parse")
+                .query_param("format", "json")
+                .query_param("page", "Value network")
+                .query_param("prop", "links");
+            then.status(200).body(SUCCESS_PAGE);
+        });
+
+        let url = server.url(PATH).to_string();
+        let links = fetch_page(&url, "Value network");
+        ms.assert();
+        assert_eq!(links.is_ok(), true);
+        assert_eq!(links.unwrap(), SUCCESS_PAGE);
     }
 
     // ***********************************************************************************************
