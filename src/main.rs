@@ -11,7 +11,7 @@ mod opt;
 
 use std::env;
 use sysinfo::{System, SystemExt};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinHandle};
 
 lazy_static! {
     static ref SYSTEM: System = {
@@ -31,22 +31,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Caching to {}", opt::OPT.get_cache().to_string_lossy());
     info!("Tasks: {:?}", get_task_count());
 
-    let tx_to_fetch = init_fetch().await;
+    let (fetch_service, tx_to_fetch) = init_fetch().await;
+    // initialize API
+    // set-up workers
 
     tx_to_fetch.send(fetch::FetchCommand::End).await.unwrap();
 
-    Ok(())
+    match tokio::try_join!(fetch_service) {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            error!("Task exit failed with {}.", err);
+            Err(err.into())
+        }
+    }
 }
 
-async fn init_fetch() -> mpsc::Sender<fetch::FetchCommand> {
+async fn init_fetch() -> (JoinHandle<()>, mpsc::Sender<fetch::FetchCommand>) {
+    trace!("main::init_fetch");
     let (tx_to_fetch, rx_by_fetch): (
         mpsc::Sender<fetch::FetchCommand>,
         mpsc::Receiver<fetch::FetchCommand>,
     ) = mpsc::channel(*TASKS);
 
-    tokio::spawn(async move { fetch::new(rx_by_fetch).await });
+    let fetch_service = tokio::spawn(async move { fetch::new(rx_by_fetch).await });
 
-    tx_to_fetch
+    (fetch_service, tx_to_fetch)
 }
 
 fn get_task_count() -> usize {
