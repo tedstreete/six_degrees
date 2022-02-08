@@ -11,7 +11,7 @@ mod opt;
 
 use std::env;
 use sysinfo::{System, SystemExt};
-//use tokio::sync::mpsc;
+use tokio::sync::mpsc;
 
 lazy_static! {
     static ref SYSTEM: System = {
@@ -19,8 +19,11 @@ lazy_static! {
         sys.refresh_all();
         sys
     };
+    static ref TASKS: usize = get_task_count();
 }
-fn main() {
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env::set_var("RUST_LOG", "six_degrees=trace");
     env_logger::init();
 
@@ -28,19 +31,45 @@ fn main() {
     info!("Caching to {}", opt::OPT.get_cache().to_string_lossy());
     info!("Tasks: {:?}", get_task_count());
 
-    let page = fetch::get_page_from("Rail transport").unwrap();
+    let tx_to_fetch = init_fetch().await;
+
+    tx_to_fetch.send(fetch::FetchCommand::End).await.unwrap();
+
+    Ok(())
 }
 
-// The number of tasks is determined from (system_memory{<MB>} ÷ 60) rounded down to next power of 2
-fn get_task_count() -> u32 {
+async fn init_fetch() -> mpsc::Sender<fetch::FetchCommand> {
+    let (tx_to_fetch, rx_by_fetch): (
+        mpsc::Sender<fetch::FetchCommand>,
+        mpsc::Receiver<fetch::FetchCommand>,
+    ) = mpsc::channel(*TASKS);
+
+    tokio::spawn(async move { fetch::new(rx_by_fetch).await });
+
+    tx_to_fetch
+}
+
+fn get_task_count() -> usize {
+    // The number of tasks is determined from (system_memory{<MB>} ÷ 60) rounded down to next power of 2
     let total_memory = SYSTEM.total_memory();
-    let mut tasks = (total_memory / 1024) / 60;
+    let raw_tasks = (total_memory / 1024) / 60;
 
     // Round-down to next power of two
-    let mut power: u64 = 1;
-    while power < tasks {
-        power *= 2;
+    let mut tasks: u64 = 1;
+    while tasks < raw_tasks {
+        tasks *= 2;
     }
 
-    (power / 2).try_into().unwrap()
+    (tasks / 2).try_into().unwrap()
+}
+
+/* *****************************************************************************************************************
+ *
+ * Tests
+ *
+ * *****************************************************************************************************************/
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 }

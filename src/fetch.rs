@@ -69,6 +69,8 @@
  *************************************************************************************************/
 
 use reqwest::{blocking, header::HeaderValue, StatusCode, Url};
+use tokio::sync::mpsc;
+
 use std::{
     fmt,
     fs::{self, create_dir_all},
@@ -105,6 +107,8 @@ lazy_static! {
 
 static PATH: &'static str = "/w/api.php";
 static PARSE_ERROR: &'static str = "Unknown wikipedia payload";
+
+// ***********************************************************************************************
 
 // ***********************************************************************************************
 
@@ -171,11 +175,28 @@ struct MissingTitleError {
 
 // ***********************************************************************************************
 
+#[derive(Debug)]
+pub enum FetchCommand {
+    End,
+    Get {
+        title: String,
+        tx: mpsc::Sender<Result<FetchEntry, FetchError>>,
+    },
+}
+
+/*
+#[derive(Debug)]
+pub enum FetchResponse {
+    Get { title: String },
+    Set { key: String, val: String },
+}
+*/
+
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FetchEntry {
-    digest: [u8; 16],
-    title: String,
-    outbound: Vec<String>,
+    pub digest: [u8; 16],
+    pub title: String,
+    pub outbound: Vec<String>,
 }
 
 impl FetchEntry {
@@ -222,13 +243,35 @@ impl From<reqwest::Error> for FetchError {
 
 /* *****************************************************************************************************************
  *
+ * Start the fetch task
+ *
+ *******************************************************************************************************************/
+
+pub async fn new(mut rx: mpsc::Receiver<FetchCommand>) {
+    //pub async fn new() {
+    trace!("fetch::new: Spawned fetch");
+    loop {
+        use FetchCommand::*;
+
+        let fetch_command = rx.recv().await.unwrap();
+        trace!("fetch:: Got command");
+        match fetch_command {
+            Get { title, tx } => tx.send(get_page_from(&title).await).await.unwrap(),
+            End => break,
+        }
+    }
+    trace!("Ending...");
+}
+
+/* *****************************************************************************************************************
+ *
  * Get a page from Wikipedia or local cache
  *
  * NOTE: Not tested by unit tests
  *
  *******************************************************************************************************************/
 
-pub fn get_page_from(page: &str) -> Result<FetchEntry, FetchError> {
+pub async fn get_page_from(page: &str) -> Result<FetchEntry, FetchError> {
     let title = page.trim();
     let path_to_page = get_cache_directory_from(&title);
 
@@ -243,7 +286,7 @@ pub fn get_page_from(page: &str) -> Result<FetchEntry, FetchError> {
             fs::read_to_string(path_to_page.as_ref().unwrap())?
         } else {
             info!(r#"Pulling page "{}" from Wikipedia"#, title);
-            let fetch = fetch_page(&URL, title)?;
+            let fetch = fetch_page(&URL, title).await?;
             if let Ok(path) = &path_to_page {
                 match fs::write(path, &fetch) {
                     Ok(_) => info!("Saved {:?} to cache", path.as_os_str()),
@@ -270,12 +313,12 @@ fn get_cache_directory_from(title: &str) -> Result<PathBuf, io::Error> {
     Ok(path_to_page)
 }
 
-fn fetch_page(root_url: &str, title: &str) -> Result<String, FetchError> {
+async fn fetch_page(root_url: &str, title: &str) -> Result<String, FetchError> {
     let url = build_url(root_url, title);
-    let response = reqwest::blocking::get(url.as_str())?;
+    let response = reqwest::get(url.as_str()).await?;
     let status = response.status();
     let links = match status {
-        StatusCode::OK => Ok(response.text()?),
+        StatusCode::OK => Ok(response.text().await?),
         _ => {
             info!(
                 "fetch::fetch_page: Reqwest returned status code: {}",
@@ -325,7 +368,7 @@ fn parse(payload: &str) -> Result<FetchEntry, FetchError> {
 
     let missing_title: Result<MissingTitleError, serde_json::Error> =
         serde_json::from_str(&payload);
-    if let Ok(message) = missing_title {
+    if let Ok(_) = missing_title {
         trace!("fetch::parse: Received Missing Title");
         return Err(FetchError::MissingTitle);
     }
@@ -363,7 +406,7 @@ mod tests {
     use httpmock::prelude::*;
 
     #[test]
-    fn parse_missing_title() {
+    fn check_parse_missing_title() {
         let parsed = parse(MISSING_TITLE).err();
 
         if let FetchError::MissingTitle = parsed.unwrap() {
@@ -374,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_maxlag() {
+    fn check_parse_maxlag() {
         let parsed = parse(MAXLAG_PAGE).err();
 
         if let FetchError::Lag(lag) = parsed.unwrap() {
@@ -385,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_fail() {
+    fn check_parse_fail() {
         let parsed = parse(FAIL_PAGE).err();
 
         if let FetchError::Parse(message) = parsed.unwrap() {
@@ -396,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_success() {
+    fn check_parse_success() {
         let entry = parse(SUCCESS_PAGE).unwrap();
         assert_eq!(entry.title, "Value network");
         assert_eq!(
@@ -408,8 +451,8 @@ mod tests {
         assert_eq!(entry.outbound[1], "Assortative mixing");
     }
 
-    #[test]
-    fn fetch_success() {
+    #[tokio::test]
+    async fn check_fetch_success() {
         // External url "https://en.wikipedia.org/w/api.php?action=parse&format=json&page=Value+network&prop=links"
         // Will use the url "<server>:<port>?action=parse&format=json&page=Value+network&prop=links"
 
@@ -424,10 +467,20 @@ mod tests {
         });
 
         let url = server.url(PATH).to_string();
-        let links = fetch_page(&url, "Value network");
+        let links = fetch_page(&url, "Value network").await;
         ms.assert();
         assert_eq!(links.is_ok(), true);
         assert_eq!(links.unwrap(), SUCCESS_PAGE);
+    }
+
+    #[test]
+    fn check_build_url() {
+        let root_url = "https://en.wikipedia.org/";
+        let url = build_url(root_url, "Value network");
+        assert_eq!(
+            url.as_str(),
+            "https://en.wikipedia.org/?action=parse&format=json&page=Value+network&prop=links"
+        );
     }
 
     // ***********************************************************************************************
