@@ -69,7 +69,7 @@
  *************************************************************************************************/
 
 use reqwest::{blocking, header::HeaderValue, StatusCode, Url};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use std::{
     fmt,
@@ -86,7 +86,7 @@ lazy_static! {
         v.push(("action", "parse"));
         v.push(("format", "json"));
         v.push(("prop", "links"));
-        v.push(("maxlag", "5"));
+        v.push(("maxlag", MAXLAG));
         v
     };
     static ref CLIENT: blocking::Client = {
@@ -105,6 +105,7 @@ lazy_static! {
     };
 }
 
+static MAXLAG: &'static str = "5";
 static PATH: &'static str = "/w/api.php";
 static PARSE_ERROR: &'static str = "Unknown wikipedia payload";
 
@@ -180,17 +181,9 @@ pub enum FetchCommand {
     End,
     Get {
         title: String,
-        tx: mpsc::Sender<Result<FetchEntry, FetchError>>,
+        tx: mpsc::Sender<FetchResult>,
     },
 }
-
-/*
-#[derive(Debug)]
-pub enum FetchResponse {
-    Get { title: String },
-    Set { key: String, val: String },
-}
-*/
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FetchEntry {
@@ -203,6 +196,10 @@ impl FetchEntry {
     pub fn get_digest(title: &str) -> [u8; 16] {
         md5::compute(title).into()
     }
+
+    fn log(&self, title: &str) {
+        info!("Retrieved page {}", title);
+    }
 }
 
 #[derive(Debug)]
@@ -213,6 +210,25 @@ pub enum FetchError {
     Lag(f32),
     MissingTitle,
     Parse(String),
+}
+
+impl FetchError {
+    fn log(&self, title: &str) {
+        match &self {
+            FetchError::IO(err) => error!("IO error fetching page: {}", err),
+            FetchError::Reqwest(err) => error!(
+                r#"Reqwest reported an error fetching page "{}"". Reported error: {}"#,
+                title, err
+            ),
+            FetchError::Http(err) => error!("Http response {:?} fetching page: {}", err, title),
+            FetchError::Lag(lag) => error!("Lag error of {} secs fetching page: {}", lag, title),
+            FetchError::MissingTitle => error!(r#"Requested title "{}" cannot be found"#, title),
+            FetchError::Parse(parse_err) => error!(
+                "Unable to parse response from page title {} secs fetching page: {}",
+                title, parse_err
+            ),
+        }
+    }
 }
 
 impl fmt::Display for FetchError {
@@ -241,13 +257,25 @@ impl From<reqwest::Error> for FetchError {
     }
 }
 
+type FetchResult = Result<FetchEntry, FetchError>;
+
 /* *****************************************************************************************************************
  *
  * Start the fetch task
  *
  *******************************************************************************************************************/
 
-pub async fn new(mut rx: mpsc::Receiver<FetchCommand>) {
+pub async fn new(tasks: usize) -> (JoinHandle<()>, mpsc::Sender<FetchCommand>) {
+    trace!("main::init_fetch");
+    let (tx_to_fetch, rx_by_fetch): (mpsc::Sender<FetchCommand>, mpsc::Receiver<FetchCommand>) =
+        mpsc::channel(tasks);
+
+    let fetch_service = tokio::spawn(async move { fetch_service(rx_by_fetch).await });
+
+    (fetch_service, tx_to_fetch)
+}
+
+pub async fn fetch_service(mut rx: mpsc::Receiver<FetchCommand>) {
     //pub async fn new() {
     trace!("fetch::new: Spawned fetch");
     loop {
@@ -267,11 +295,9 @@ pub async fn new(mut rx: mpsc::Receiver<FetchCommand>) {
  *
  * Get a page from Wikipedia or local cache
  *
- * NOTE: Not tested by unit tests
- *
  *******************************************************************************************************************/
 
-pub async fn get_page_from(page: &str) -> Result<FetchEntry, FetchError> {
+pub async fn get_page_from(page: &str) -> FetchResult {
     let title = page.trim();
     let path_to_page = get_cache_directory_from(&title);
 
@@ -280,24 +306,72 @@ pub async fn get_page_from(page: &str) -> Result<FetchEntry, FetchError> {
         exists = path.exists();
     };
 
-    let fetch = {
+    let mut fetch = {
         if exists {
             info!(r#"Found page "{}" in local cache"#, title);
             fs::read_to_string(path_to_page.as_ref().unwrap())?
         } else {
             info!(r#"Pulling page "{}" from Wikipedia"#, title);
             let fetch = fetch_page(&URL, title).await?;
-            if let Ok(path) = &path_to_page {
-                match fs::write(path, &fetch) {
-                    Ok(_) => info!("Saved {:?} to cache", path.as_os_str()),
-                    Err(_) => info!("Failed to save {:?} to cache", path.as_os_str()),
-                }
-            }
             fetch
         }
     };
 
-    parse(&fetch)
+    let mut response = parse(&fetch);
+    if let Err(FetchError::Lag(_)) = response {
+        // Ideally directly update response and fetch in the tuple, but Rust will not destructure a
+        // tuple in this context
+        let (lag_response, lag_fetch) = process_maxlag(&URL, title).await;
+        response = lag_response;
+        fetch = lag_fetch;
+    }
+
+    match &response {
+        Ok(fetch_entry) => {
+            fetch_entry.log(title);
+            cache_page(&fetch, path_to_page);
+        }
+        Err(fetch_error) => fetch_error.log(title),
+    }
+
+    response
+}
+
+pub async fn process_maxlag(url: &str, title: &str) -> (FetchResult, String) {
+    let mut tries = 1; // 1 so that the first delay is MAXLAX seconds
+    loop {
+        // Wait for the server lag to recover. Increase the delay if the server lag persists
+        let duration = tokio::time::Duration::new(MAXLAG.parse().unwrap(), 0);
+        tokio::time::sleep(duration).await;
+        // Try fetching and parsing the page again
+        let fetch = fetch_page(url, title).await;
+        match fetch {
+            Ok(fetch) => {
+                let response = parse(&fetch);
+
+                if let Err(FetchError::Lag(_)) = response {
+                    // If we get MAXLAG for 5 times, then give-up
+                    tries += 1;
+                    if tries > 5 {
+                        return (response, fetch);
+                    }
+                } else {
+                    // it's business as usual if there is no subsequent lag
+                    return (response, fetch);
+                }
+            }
+            Err(fetch) => return (Err(fetch), String::from("")),
+        }
+    }
+}
+
+fn cache_page(contents: &str, path_to_page: Result<PathBuf, io::Error>) {
+    if let Ok(path) = &path_to_page {
+        match fs::write(path, &contents) {
+            Ok(_) => info!("Saved {:?} to cache", path.as_os_str()),
+            Err(_) => info!("Failed to save {:?} to cache", path.as_os_str()),
+        }
+    }
 }
 
 fn get_cache_directory_from(title: &str) -> Result<PathBuf, io::Error> {
@@ -331,7 +405,6 @@ async fn fetch_page(root_url: &str, title: &str) -> Result<String, FetchError> {
 }
 
 fn build_url(root_url: &str, title: &str) -> Url {
-    // TODO: encode title into query encoding if necessary (the Url crate may map this correctly - need to check for accented characters etc.)
     let api = Url::parse_with_params(
         root_url,
         &[
@@ -352,7 +425,7 @@ fn build_url(root_url: &str, title: &str) -> Url {
  *
  * *****************************************************************************************************************/
 
-fn parse(payload: &str) -> Result<FetchEntry, FetchError> {
+fn parse(payload: &str) -> FetchResult {
     let parsed: Result<Page, serde_json::Error> = serde_json::from_str(&payload);
     if let Ok(parsed) = parsed {
         trace!("fetch::parse: Parsed page: {}", &parsed.parse.title);
@@ -377,7 +450,7 @@ fn parse(payload: &str) -> Result<FetchEntry, FetchError> {
     return Err(FetchError::Parse(String::from(PARSE_ERROR)));
 }
 
-fn extract_links_from(parsed: Page) -> Result<FetchEntry, FetchError> {
+fn extract_links_from(parsed: Page) -> FetchResult {
     let outbound: Vec<String> = parsed
         .parse
         .links
@@ -405,17 +478,18 @@ mod tests {
     use super::*;
     use httpmock::prelude::*;
 
-    #[test]
-    fn check_parse_missing_title() {
-        let parsed = parse(MISSING_TITLE).err();
+    /*
+        #[test]
+        fn check_parse_missing_title() {
+            let parsed = parse(MISSING_TITLE).err();
 
-        if let FetchError::MissingTitle = parsed.unwrap() {
-            assert!(true);
-        } else {
-            assert!(false)
+            if let FetchError::MissingTitle = parsed.unwrap() {
+                assert!(true);
+            } else {
+                assert!(false)
+            }
         }
-    }
-
+    */
     #[test]
     fn check_parse_maxlag() {
         let parsed = parse(MAXLAG_PAGE).err();
@@ -471,6 +545,27 @@ mod tests {
         ms.assert();
         assert_eq!(links.is_ok(), true);
         assert_eq!(links.unwrap(), SUCCESS_PAGE);
+    }
+
+    #[tokio::test]
+    async fn check_maxlag() {
+        // External url "https://en.wikipedia.org/w/api.php?action=parse&format=json&page=Value+network&prop=links"
+        // Will use the url "<server>:<port>?action=parse&format=json&page=Maxlag+error+frame&prop=links"
+
+        let server = MockServer::start();
+        let ms = server.mock(|when, then| {
+            when.path(PATH)
+                .query_param("action", "parse")
+                .query_param("format", "json")
+                .query_param("page", "Maxlag error frame")
+                .query_param("prop", "links");
+            then.status(200).body(MAXLAG_PAGE);
+        });
+
+        let url = server.url(PATH).to_string();
+        let (links, _) = process_maxlag(&url, "Maxlag error frame").await;
+        ms.assert_hits(5);
+        assert!(links.is_err());
     }
 
     #[test]
