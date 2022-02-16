@@ -202,10 +202,6 @@ impl FetchEntry {
     pub fn get_digest(title: &str) -> [u8; 16] {
         md5::compute(title).into()
     }
-
-    fn log(&self, title: &str) {
-        info!("Retrieved page {}", title);
-    }
 }
 
 #[derive(Debug)]
@@ -216,25 +212,6 @@ pub enum FetchError {
     Lag(f32),
     MissingTitle,
     Parse(String),
-}
-
-impl FetchError {
-    fn log(&self, title: &str) {
-        match &self {
-            FetchError::IO(err) => error!("IO error fetching page: {}", err),
-            FetchError::Reqwest(err) => error!(
-                r#"Reqwest reported an error fetching page "{}"". Reported error: {}"#,
-                title, err
-            ),
-            FetchError::Http(err) => error!("Http response {:?} fetching page: {}", err, title),
-            FetchError::Lag(lag) => error!("Lag error of {} secs fetching page: {}", lag, title),
-            FetchError::MissingTitle => error!(r#"Requested title "{}" cannot be found"#, title),
-            FetchError::Parse(parse_err) => error!(
-                "Unable to parse response from page title {} secs fetching page: {}",
-                title, parse_err
-            ),
-        }
-    }
 }
 
 impl fmt::Display for FetchError {
