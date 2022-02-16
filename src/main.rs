@@ -11,7 +11,6 @@ mod opt;
 
 use std::env;
 use sysinfo::{System, SystemExt};
-use tokio::{sync::mpsc, task::JoinHandle};
 
 lazy_static! {
     static ref SYSTEM: System = {
@@ -31,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Caching to {}", opt::OPT.get_cache().to_string_lossy());
     info!("Tasks: {:?}", get_task_count());
 
-    let (fetch_service, tx_to_fetch) = init_fetch().await;
+    let (fetch_service, tx_to_fetch) = fetch::new(*TASKS).await;
     // initialize API
     // set-up workers
 
@@ -44,18 +43,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(err.into())
         }
     }
-}
-
-async fn init_fetch() -> (JoinHandle<()>, mpsc::Sender<fetch::FetchCommand>) {
-    trace!("main::init_fetch");
-    let (tx_to_fetch, rx_by_fetch): (
-        mpsc::Sender<fetch::FetchCommand>,
-        mpsc::Receiver<fetch::FetchCommand>,
-    ) = mpsc::channel(*TASKS);
-
-    let fetch_service = tokio::spawn(async move { fetch::new(rx_by_fetch).await });
-
-    (fetch_service, tx_to_fetch)
 }
 
 fn get_task_count() -> usize {
