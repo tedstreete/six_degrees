@@ -1,6 +1,5 @@
 use std::sync::mpsc::Receiver;
 
-use crate::TASKS;
 use sysinfo::{System, SystemExt};
 use tokio::{sync::mpsc, task::JoinHandle};
 
