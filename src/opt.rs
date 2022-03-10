@@ -4,13 +4,13 @@
  *
  *************************************************************************************************/
 
+use clap;
 use std::{
     cmp::{max, min},
     path::PathBuf,
 };
-use structopt::StructOpt;
 
-#[derive(StructOpt, Debug)]
+#[derive(clap::StructOpt, Debug)]
 #[structopt(name = "six_degrees")]
 pub struct Opt {
     // Directory to hold cache files
@@ -36,12 +36,19 @@ pub struct Opt {
     // Domain name for wikipedia API URL
     // URLs are defined at https://www.mediawiki.org/wiki/API:Main_page
     #[structopt(
-        short = "n",
+        short = 'n',
         long = "domain_name",
         help = "Domain name for wikipedia API URL",
         default_value = "https://en.wikipedia.org/"
     )]
     domain_name: String,
+
+    // System memory
+    // WARNING: USE WITH CARE. Normal operation will avoid the use of swap space
+    // This option is intended for development use, to prevent allocation of all memory,
+    // relegating the debugger to usiong swap
+    #[structopt(short, long, help = "The amount of system memory in KB")]
+    memory: Option<u64>,
 
     // Port on which the API should be presented
     #[structopt(
@@ -52,7 +59,7 @@ pub struct Opt {
     )]
     port: u32,
 
-    // Numbr of tasks
+    // Number of workers
     #[structopt(
         short,
         long,
@@ -60,11 +67,11 @@ pub struct Opt {
         long_help = "If no value is provided here, the number of tasks will be calculated from the formula (<amount of memory in MB> / 60) rounded down to the nearest power of 2",
         default_value = "0"
     )]
-    tasks: u32,
+    workers: u32,
 }
 
 lazy_static! {
-    pub static ref OPT: Opt = Opt::from_args();
+    pub static ref OPT: Opt = clap::Parser::parse();
 }
 
 impl Opt {
@@ -86,5 +93,8 @@ impl Opt {
     }
     pub fn get_domain_name(&self) -> &str {
         &self.domain_name
+    }
+    pub fn get_memory(&self) -> &Option<u64> {
+        &self.memory
     }
 }
