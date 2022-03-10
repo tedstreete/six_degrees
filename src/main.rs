@@ -20,14 +20,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Getting {} pages deep", opt::OPT.get_depth());
     info!("Caching to {}", opt::OPT.get_cache().to_string_lossy());
-    info!(
-        "Workers: {:?}",
-        foundation::get_worker_count(foundation::system_memory())
-    );
-    info!(
-        "Slabs: {:?}",
-        foundation::allocate_slabs(foundation::system_memory())
-    );
+    let foundation = foundation::Foundation::new();
+
+    info!("Foundation: {:?}", foundation);
 
     /*  let (fetch_service, tx_to_fetch) = fetch::new(*TASKS).await;
 

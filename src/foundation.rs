@@ -1,5 +1,7 @@
-use std::{cmp, env};
+use std::{cmp, env, panic};
 use sysinfo::{System, SystemExt};
+
+use crate::opt::OPT;
 
 lazy_static! {
     static ref SYSTEM: System = {
@@ -7,20 +9,41 @@ lazy_static! {
         sys.refresh_all();
         sys
     };
-    static ref TASKS: usize = get_worker_count(SYSTEM.total_memory());
 }
 
 #[derive(Debug)]
-pub struct Slabs {
-    pub slabs_per_worker: usize,
-    pub spare_count: usize,
-    pub spare_slabs: Vec<u64>,
+pub struct Foundation {
+    worker_count: u64,
+    slabs_per_worker: u64,
+    spare_count: u64,
+    spare_slabs: Vec<u64>,
 }
 
-pub fn get_worker_count(sytem_memory: u64) -> usize {
-    // The number of tasks is determined from (system_memory{<MB>} ÷ 60) rounded down to next power of 2
-    let raw_workers = (sytem_memory / 1024) / 60;
-    round_down_to_power_of_2(raw_workers)
+impl Foundation {
+    pub fn new() -> Foundation {
+        let system_memory = system_memory();
+        get_foundation_for(system_memory)
+    }
+
+    pub fn get_worker_count(&self) -> u64 {
+        self.worker_count
+    }
+
+    pub fn get_slabs_per_worker(&self) -> u64 {
+        self.slabs_per_worker
+    }
+
+    pub fn get_spare_count(&self) -> u64 {
+        self.spare_count
+    }
+
+    /**
+     * return a spare slab from the pool of spare slabs
+     * TODO Stub: Write this and tests for this
+     */
+    pub fn get_spare_slab(&self) -> Option<bool> {
+        None
+    }
 }
 
 /*
@@ -28,47 +51,52 @@ pub fn get_worker_count(sytem_memory: u64) -> usize {
 * use bincode to serialize entries from structs into slabs and deserialize into structs
 
 */
-pub fn allocate_slabs(system_memory: u64) -> Slabs {
-    let workers = get_worker_count(system_memory) as u64;
+fn get_foundation_for(system_memory: u64) -> Foundation {
+    if system_memory < 2097152 {
+        error!("Minimum memory is 2GB");
+        std::process::exit(1);
+    }
+
+    // The number of tasks is determined from (system_memory{<MB>} ÷ 60) rounded down to next power of 2
+    let raw_workers = (system_memory / 1024) / 60;
+    let worker_count = round_down_to_power_of_2(raw_workers);
+
     let working_memory = 1024 * 1024; // Allow 1GB for execution and working memory
-    let tx_handle_count = cmp::min(8 * workers / 1024, 1024); // 8 bytes per handle, with minimum of 1MB
-                                                              // TODO Valildate average message size
-    let message_size = workers; // Average message size of 1k
-    let tokio_task_cache = 64 * workers / 1024;
+    let tx_handle_count = cmp::min(8 * worker_count / 1024, 1024); // 8 bytes per handle, with minimum of 1MB
+                                                                   // TODO Valildate average message size
+    let message_size = worker_count; // Average message size of 1k
+    let tokio_task_cache = 64 * worker_count / 1024;
     let reserved_memory: u64 =
         (working_memory + tx_handle_count + message_size + tokio_task_cache) as u64;
     let memory_for_slabs = system_memory - reserved_memory;
     let slabs = memory_for_slabs / (1024); // Each slab is 1MB
-    let slabs_per_worker = round_down_to_power_of_2(slabs / workers);
-    let spare_count = ((slabs - (workers * slabs_per_worker as u64)) * 2) as usize; // spare slabs are 500KB
+    let slabs_per_worker = round_down_to_power_of_2(slabs / worker_count as u64);
+    let spare_count = (slabs - (worker_count as u64 * slabs_per_worker as u64)) * 2; // spare slabs are 500KB
     let spare_slabs = Vec::new();
 
-    Slabs {
+    Foundation {
+        worker_count,
         slabs_per_worker,
         spare_count,
         spare_slabs,
     }
 }
 
-/**
- * return a spare slab from the pool of spare slabs
-*/
-pub fn get_spare_slab() -> Option<bool> {
-    None
-}
-
-fn round_down_to_power_of_2(value: u64) -> usize {
+fn round_down_to_power_of_2(value: u64) -> u64 {
     // Round-down to next power of two
     let mut power: u64 = 1;
     while power < value {
         power *= 2;
     }
 
-    (power / 2).try_into().unwrap()
+    (power / 2)
 }
 
-pub fn system_memory() -> u64 {
-    SYSTEM.total_memory()
+fn system_memory() -> u64 {
+    match OPT.get_memory() {
+        Some(memory) => *memory,
+        None => SYSTEM.total_memory(),
+    }
 }
 
 /* *****************************************************************************************************************
@@ -82,16 +110,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_slab_count() {
-        let slabs = allocate_slabs(8589934);
-        assert_eq!(slabs.slabs_per_worker, 32);
-        assert_eq!(slabs.spare_count, 6536);
-        assert_eq!(slabs.spare_slabs.len(), 0);
-    }
-
-    #[test]
-    fn test_worker_count() {
-        let worker_count = get_worker_count(8589934);
-        assert_eq!(worker_count, 128);
+    fn test_foundation() {
+        let foundation = get_foundation_for(8589934);
+        assert_eq!(foundation.get_worker_count(), 128);
+        assert_eq!(foundation.get_slabs_per_worker(), 32);
+        assert_eq!(foundation.get_spare_count(), 6536);
+        assert_eq!(foundation.spare_slabs.len(), 0);
     }
 }
