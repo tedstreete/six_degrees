@@ -68,6 +68,7 @@
  *
  *************************************************************************************************/
 
+use crate::foundation;
 use reqwest::{blocking, header::HeaderValue, StatusCode, Url};
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -271,10 +272,14 @@ type FetchResult = Result<FetchEntry, FetchError>;
  *
  *******************************************************************************************************************/
 
-pub async fn new(tasks: usize) -> (JoinHandle<()>, mpsc::Sender<FetchCommand>) {
+pub async fn new(
+    foundation: &foundation::Foundation,
+) -> (JoinHandle<()>, mpsc::Sender<FetchCommand>) {
     trace!("main::init_fetch");
+
+    let worker_count = foundation.get_worker_count().try_into().unwrap();
     let (tx_to_fetch, rx_by_fetch): (mpsc::Sender<FetchCommand>, mpsc::Receiver<FetchCommand>) =
-        mpsc::channel(tasks);
+        mpsc::channel(worker_count);
 
     let fetch_service = tokio::spawn(async move { fetch_service(rx_by_fetch).await });
 

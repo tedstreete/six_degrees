@@ -1,3 +1,5 @@
+//! Determine foundational attributes based on available system memory
+
 use std::{cmp, env, panic};
 use sysinfo::{System, SystemExt};
 
@@ -33,17 +35,21 @@ impl Foundation {
         self.slabs_per_worker
     }
 
+    /// Returns the number of unallocated spare slabs
     pub fn get_spare_count(&self) -> u64 {
         self.spare_count
     }
 
-    /**
-     * return a spare slab from the pool of spare slabs
-     * TODO Stub: Write this and tests for this
-     */
+    /// Allocate a spare slab from the pool of spare slabs
+    ///
+    /// TODO Stub: Write this and tests for this
+
     pub fn get_spare_slab(&self) -> Option<bool> {
+        // Don't forget to reduce the spare_slabs count when allocating
         None
     }
+
+    //    pub fn extract_worker_id_from(id: [u8]) -> u64 {}
 }
 
 /*
@@ -89,7 +95,7 @@ fn round_down_to_power_of_2(value: u64) -> u64 {
         power *= 2;
     }
 
-    (power / 2)
+    power / 2
 }
 
 fn system_memory() -> u64 {
@@ -105,16 +111,30 @@ fn system_memory() -> u64 {
  *
  * *****************************************************************************************************************/
 
+// Module is public, as get_test_foundation is called from test functions in worker.rs
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]
     fn test_foundation() {
-        let foundation = get_foundation_for(8589934);
+        let foundation = get_test_foundation();
         assert_eq!(foundation.get_worker_count(), 128);
         assert_eq!(foundation.get_slabs_per_worker(), 32);
         assert_eq!(foundation.get_spare_count(), 6536);
         assert_eq!(foundation.spare_slabs.len(), 0);
+    }
+
+    /* *****************************************************************************************************************
+     *
+     * Helper functions - Used only by test routines, but need to be public so that they are accessible from other
+     * modules
+     * *****************************************************************************************************************/
+
+    /// Create a default Foundation struct with a small memory footprint that will not exhaust available memory,
+    /// leaving sufficient memory for developer tools to run alongside the tests
+
+    pub fn get_test_foundation() -> Foundation {
+        get_foundation_for(8589934)
     }
 }

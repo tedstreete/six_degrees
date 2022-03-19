@@ -13,23 +13,32 @@ mod worker;
 
 use std::env;
 
+use tokio::sync::mpsc;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env::set_var("RUST_LOG", "six_degrees=trace");
+    env::set_var("RUST_LOG", "six_degrees=debug");
     env_logger::init();
 
     info!("Getting {} pages deep", opt::OPT.get_depth());
     info!("Caching to {}", opt::OPT.get_cache().to_string_lossy());
-    let foundation = foundation::Foundation::new();
 
+    let foundation = foundation::Foundation::new();
     info!("Foundation: {:?}", foundation);
 
-    /*  let (fetch_service, tx_to_fetch) = fetch::new(*TASKS).await;
+    let (workers, tx_to_workers) = worker::new(&foundation).await;
+    let (fetch_service, tx_to_fetch) = fetch::new(&foundation).await;
 
-    // set-up workers
-    let (worker_services, worker_tx_handles) = worker::new(*TASKS).await;
-
-    // initialize API
+    // *******
+    let (response_tx, response_rx): (
+        mpsc::Sender<worker::WorkerResponse>,
+        mpsc::Receiver<worker::WorkerResponse>,
+    ) = mpsc::channel(1024);
+    let request = worker::WorkerCommand::Request {
+        title: "Railways".to_string(),
+        response_tx_handle: response_tx.clone(),
+    };
+    let _ = tx_to_workers[0].send(request).await;
 
     // During testing, let things stabilize for 5 seconds
     let duration = tokio::time::Duration::new(5, 0);
@@ -37,23 +46,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Stop long-running tasks
     tx_to_fetch.send(fetch::FetchCommand::End).await.unwrap();
-    for handle in worker_tx_handles {
-        handle.send(worker::WorkerCommand::End).await.unwrap();
+    for tx in tx_to_workers {
+        tx.send(worker::WorkerCommand::End).await.unwrap();
     }
 
-    // Join long running tasks
-    for worker_service in worker_services {
-        tokio::try_join!(worker_service).unwrap();
-    }
+    worker::shut_down(workers).await?;
 
-    match tokio::try_join!(fetch_service) {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            error!("Task exit failed with {}.", err);
-            Err(err.into())
-        }
-    }
-    */
+    tokio::try_join!(fetch_service)?;
+
     Ok(())
 }
 
