@@ -3,7 +3,9 @@ use std::{fmt, sync::mpsc::Receiver};
 use sysinfo::{System, SystemExt};
 use tokio::{sync::mpsc, task::JoinHandle};
 
+use crate::entry;
 use crate::foundation;
+use crate::opt::OPT;
 
 // ***********************************************************************************************
 
@@ -24,7 +26,7 @@ pub enum WorkerResponse {
 
 #[derive(Debug)]
 pub struct Links {
-    pub digest: [u8; 16],
+    pub digest: entry::Digest,
     pub title: String,
     pub outbound: Vec<String>,
     pub inbound: Vec<String>,
@@ -44,27 +46,6 @@ type RxCommands = Vec<RxCommand>;
 
 /* *****************************************************************************************************************
  *
- *
- * The digest is split into three fields
- *
- * xxxxssssswwwwwwww
- *
- * where:
- *    x has no special meaning
- *    s is the slab_id: The number of slabs is guaranteed to be a power of 2
- *    w is the worker_id: The number of workers is guaranteed to be a power of 2
- *
- * To determine the target worker:-
- *     do a boolean AND between the worker_id and the (number-of-tasks - 1)
- *     convert that into a u32
- *     the resulting value is the index into the Vector of TxCommands to which a request should be sent
- *
- * To determine the target slab
- *    do a boolean AND between (number_of_tasks) * (number_ of_slabs - 1)
- *    divide the result by the number of tasks
- *    convert that into a u32
- *    The resulting value is the index into the vector of slabs to be inspected
- *
  * If worker needs to go to fetch, it doesn't wait for the fetch to complete. Instead, it
  *    spawns a new task to fetch the page from store/wikipedia. When this fetch completes, the worker
  *       adds the information to the appropriate slab
@@ -79,6 +60,10 @@ type RxCommands = Vec<RxCommand>;
 pub async fn new(foundation: &foundation::Foundation) -> (Vec<JoinHandle<()>>, TxCommands) {
     trace!("worker::new");
 
+    let worker_count: usize = match OPT.get_worker_count() {
+        Some(count) => count,
+        None => foundation.get_worker_count().try_into().unwrap(),
+    };
     let worker_count = foundation.get_worker_count().try_into().unwrap();
 
     let mut tx_commands: TxCommands = Vec::with_capacity(worker_count);
@@ -156,7 +141,7 @@ impl Worker {
 
     fn process_request(title: String, response_tx_handle: mpsc::Sender<WorkerResponse>) {
         trace!("worker:process_request for {}", &title);
-        let digest = crate::fetch::FetchEntry::get_digest(&title);
+        let digest = crate::entry::get_digest(&title);
 
         // get digest for title
         // can title be handled locally?
@@ -244,17 +229,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_new_worker() {
-        let (mut join_handles, tx_handles) = new(&foundation::tests::get_test_foundation()).await;
+        let (mut join_handles, mut tx_handles) =
+            new(&foundation::tests::get_test_foundation()).await;
 
-        assert_eq!(join_handles.len(), 2);
-        tx_handles[0].send(WorkerCommand::End).await.unwrap();
-        tx_handles[1].send(WorkerCommand::End).await.unwrap();
+        assert_eq!(join_handles.len(), 16);
+        for tx_handle in tx_handles.drain(..) {
+            tx_handle.send(WorkerCommand::End).await.unwrap();
+        }
 
-        loop {
-            match join_handles.pop() {
-                Some(jh) => tokio::try_join!(jh).unwrap(),
-                None => break,
-            };
+        for join_handle in join_handles.drain(..) {
+            tokio::try_join!(join_handle).unwrap();
         }
     }
 }

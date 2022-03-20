@@ -68,6 +68,7 @@
  *
  *************************************************************************************************/
 
+use crate::entry;
 use crate::foundation;
 use reqwest::{blocking, header::HeaderValue, StatusCode, Url};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -194,16 +195,12 @@ pub enum FetchCommand {
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct FetchEntry {
-    pub digest: [u8; 16],
+    pub digest: entry::Digest,
     pub title: String,
     pub outbound: Vec<String>,
 }
 
 impl FetchEntry {
-    pub fn get_digest(title: &str) -> [u8; 16] {
-        md5::compute(title).into()
-    }
-
     fn log(&self, title: &str) {
         info!("Retrieved page {}", title);
     }
@@ -416,7 +413,7 @@ fn extract_links_from(parsed: Page) -> FetchResult {
         .map(|link| link.title)
         .collect();
 
-    let digest = FetchEntry::get_digest(&parsed.parse.title);
+    let digest = entry::get_digest(&parsed.parse.title);
     Ok(FetchEntry {
         digest,
         title: parsed.parse.title,
@@ -434,7 +431,7 @@ fn cache_page(contents: &str, path_to_page: Result<PathBuf, io::Error>) {
 }
 
 fn get_cache_directory_from(title: &str) -> Result<PathBuf, io::Error> {
-    let title_digest = FetchEntry::get_digest(title);
+    let title_digest = entry::get_digest(title);
     let mut path_to_page = opt::OPT.get_cache();
     path_to_page.push(format!("{:02x?}", title_digest[2]));
     path_to_page.push(format!("{:02x?}", title_digest[1]));

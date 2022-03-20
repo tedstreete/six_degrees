@@ -6,6 +6,7 @@ extern crate log;
 extern crate serde_derive;
 extern crate tokio;
 
+mod entry;
 mod fetch;
 mod foundation;
 mod opt;

@@ -23,6 +23,10 @@ pub struct Opt {
     )]
     cache: PathBuf,
 
+    // Override processor core count
+    #[structopt(short = 'o', long, help = "Processor core count")]
+    cores: Option<u64>,
+
     // Depth of wikipedia hierarchy to return
     #[structopt(
         short,
@@ -47,7 +51,11 @@ pub struct Opt {
     // WARNING: USE WITH CARE. Normal operation will avoid the use of swap space
     // This option is intended for development use, to prevent allocation of all memory,
     // relegating the debugger to usiong swap
-    #[structopt(short, long, help = "The amount of system memory in KB")]
+    #[structopt(
+        short,
+        long,
+        help = "The amount of system memory in KB. Use with care to avoid use of swap space"
+    )]
     memory: Option<u64>,
 
     // Port on which the API should be presented
@@ -63,11 +71,10 @@ pub struct Opt {
     #[structopt(
         short,
         long,
-        help = "Number of tasks that will be spawned",
-        long_help = "If no value is provided here, the number of tasks will be calculated from the formula (<amount of memory in MB> / 60) rounded down to the nearest power of 2",
-        default_value = "0"
+        help = "Number of worker tasks that will be spawned",
+        long_help = "If no value is provided here, the number of workers is equal to the number of cores in the system, * 2 rounded down to the nearest power of 2"
     )]
-    workers: u32,
+    workers: Option<usize>,
 }
 
 lazy_static! {
@@ -96,5 +103,11 @@ impl Opt {
     }
     pub fn get_memory(&self) -> &Option<u64> {
         &self.memory
+    }
+    pub fn get_cores(&self) -> &Option<u64> {
+        &self.cores
+    }
+    pub fn get_worker_count(&self) -> Option<usize> {
+        self.workers
     }
 }
