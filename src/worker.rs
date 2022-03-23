@@ -5,7 +5,6 @@ use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::entry;
 use crate::foundation;
-use crate::opt::OPT;
 
 // ***********************************************************************************************
 
@@ -60,12 +59,7 @@ type RxCommands = Vec<RxCommand>;
 pub async fn new(foundation: &foundation::Foundation) -> (Vec<JoinHandle<()>>, TxCommands) {
     trace!("worker::new");
 
-    let worker_count: u32 = match OPT.get_worker_count() {
-        Some(count) => count,
-        None => foundation.get_worker_count().try_into().unwrap(),
-    };
     let worker_count = foundation.get_worker_count().try_into().unwrap();
-
     let mut tx_commands: TxCommands = Vec::with_capacity(worker_count);
     let mut rx_commands: RxCommands = Vec::with_capacity(worker_count);
     let mut join_handles: Vec<JoinHandle<()>> = Vec::with_capacity(worker_count);
