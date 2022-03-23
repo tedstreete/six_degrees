@@ -1,3 +1,5 @@
+use crate::foundation;
+
 pub(crate) type Digest = [u8; 16];
 
 pub(crate) struct Entry {
@@ -51,8 +53,3 @@ impl Entry {
  *     do a boolean AND between the worker_id and the (foundation.worker_count - 1)
  *     the resulting value is the index into the Vector of TxCommands to which a request should be sent
  */
-pub fn extract_worker_id_from(digest: Digest) -> u16 {
-    let mut id = digest[0] + digest[1] << 8;
-    // id & 0
-    0
-}

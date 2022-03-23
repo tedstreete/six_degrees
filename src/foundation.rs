@@ -27,7 +27,7 @@ pub struct Foundation {
 
 impl Foundation {
     pub fn new() -> Foundation {
-        get_foundation_for(system_memory(), system_cores())
+        get_foundation_for(system_memory(), system_cores(), raw_workers())
     }
 
     // pub fn get_bits_for_workers(&self) -> u16 {
@@ -67,6 +67,20 @@ impl Foundation {
         // Don't forget to reduce the spare_slabs count when allocating
         None
     }
+
+    pub fn extract_worker_id_from(&self, digest: crate::entry::Digest) -> u16 {
+        let mut id: u16 = digest[1].into();
+        id = id << 8;
+        id += digest[0] as u16;
+        id & self.get_bitwise_worker_match()
+    }
+
+    pub fn extract_slab_id_from(&self, digest: crate::entry::Digest) -> u16 {
+        let mut id: u16 = digest[3].into();
+        id = id << 8;
+        id += digest[2] as u16;
+        id & self.get_bitwise_slab_match()
+    }
 }
 
 /*
@@ -74,20 +88,12 @@ impl Foundation {
 * use bincode to serialize entries from structs into slabs and deserialize into structs
 
 */
-fn get_foundation_for(system_memory: u64, cores: usize) -> Foundation {
+fn get_foundation_for(system_memory: u64, cores: usize, raw_workers: u32) -> Foundation {
     // All memory calculations in KB
     if system_memory < 2097152 {
         error!("Minimum memory is 2GB");
         std::process::exit(1);
     }
-
-    // Use cores * 2 to account for hyperthreading that may be enabled on some processor architectures
-    // Over-allocating tasks on a non-hyperthreaded processor will not have a meaningful impact
-    // worker count cannot exceed 65K workers (16 bits)
-    let raw_workers: u32 = match OPT.get_worker_count() {
-        Some(raw_workers) => raw_workers,
-        None => min(cores * 2, u16::MAX.into()) as u32,
-    };
 
     let worker_count = round_down_to_power_of_2(raw_workers);
 
@@ -164,6 +170,16 @@ fn system_cores() -> usize {
     }
 }
 
+fn raw_workers() -> u32 {
+    // Use cores * 2 to account for hyperthreading that may be enabled on some processor architectures
+    // Over-allocating tasks on a non-hyperthreaded processor will not have a meaningful impact
+    // worker count cannot exceed 65K workers (16 bits)
+    match OPT.get_worker_count() {
+        Some(raw_workers) => raw_workers,
+        None => min(system_cores() * 2, u16::MAX.into()) as u32,
+    }
+}
+
 /* *****************************************************************************************************************
  *
  * Tests
@@ -176,14 +192,53 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn test_foundation() {
+    fn test_get_worker_count() {
         let foundation = get_test_foundation();
         assert_eq!(foundation.get_worker_count(), 16);
+    }
+
+    #[test]
+    fn test_get_bitwise_worker_match() {
+        let foundation = get_test_foundation();
         assert_eq!(foundation.get_bitwise_worker_match(), 15);
+    }
+
+    #[test]
+    fn test_get_slabs_per_worker() {
+        let foundation = get_test_foundation();
         assert_eq!(foundation.get_slabs_per_worker(), 256);
+    }
+
+    #[test]
+    fn test_get_bitwise_slab_match() {
+        let foundation = get_test_foundation();
         assert_eq!(foundation.get_bitwise_slab_match(), 255);
+    }
+
+    #[test]
+    fn test_get_spare_count() {
+        let foundation = get_test_foundation();
         assert_eq!(foundation.get_spare_count(), 6534);
+    }
+
+    #[test]
+    fn test_spare_slabs() {
+        let foundation = get_test_foundation();
         assert_eq!(foundation.spare_slabs.len(), 0);
+    }
+
+    #[test]
+    fn test_extract_worker_id_from() {
+        let foundation = get_test_foundation();
+        let digest = crate::entry::Entry::get_digest("Rail transport");
+        assert_eq!(foundation.extract_worker_id_from(digest), 11);
+    }
+
+    #[test]
+    fn test_extract_slab_id_from() {
+        let foundation = get_test_foundation();
+        let digest = crate::entry::Entry::get_digest("Rail transport");
+        assert_eq!(foundation.extract_slab_id_from(digest), 196);
     }
 
     #[test]
@@ -203,6 +258,6 @@ pub mod tests {
     /// leaving sufficient memory for developer tools to run alongside the tests
 
     pub fn get_test_foundation() -> Foundation {
-        get_foundation_for(8589934, 8)
+        get_foundation_for(8589934, 8, 16)
     }
 }
