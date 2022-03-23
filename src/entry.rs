@@ -1,6 +1,6 @@
 pub(crate) type Digest = [u8; 16];
 
-struct Entry {
+pub(crate) struct Entry {
     digest: Digest,
     outbound_count: u32,
     inbound_count: u32,
@@ -16,44 +16,43 @@ impl Entry {
         let to = Vec::new();
         to
     }
+
+    pub fn get_digest(title: &str) -> Digest {
+        md5::compute(title).into()
+    }
 }
 
 /* *****************************************************************************************************************
  *
+ * Digest[0;2] hold the worker_id. If there are less than 65K workers, then the additional bits are ignored when
+ * determining the id. However the bits are still significant when matching the overall digest.
  *
- * The digest is split into three fields
+ * Digest[2;2] hold the slab_id. If there are less than 65K workers, then the additional bits are ignored when
+ * determining the id. However the bits are still significant when matching the overall digest.
  *
- * xxxxssssswwwwwwww
- *
- * where:
- *    x has no special meaning
- *    s is the slab_id: The number of slabs is guaranteed to be a power of 2
- *    w is the worker_id: The number of workers is guaranteed to be a power of 2
+ * The endiness of the processor is not significant. Providing the converstion between It will not
+ * matter whether the conversion uses big-endian or little-endian, providing all the conversions are consistent.
  *
  * To determine the target worker:-
- *     do a boolean AND between the worker_id and the (number-of-tasks - 1)
- *     convert that into a u32
+ *     Create u16 from Digest[0;2]
+ *     do a boolean AND between the resulting u16 and the (worker_count - 1)
  *     the resulting value is the index into the Vector of TxCommands to which a request should be sent
  *
  * To determine the target slab
- *    do a boolean AND between (number_of_tasks) * (number_ of_slabs - 1)
- *    divide the result by the number of tasks
- *    convert that into a u32
+ *    Create u16 from Digest[2;2]
+ *    do a boolean AND between the resulting u16 and (number_ of_slabs - 1)
  *    The resulting value is the index into the vector of slabs to be inspected
  *
  *******************************************************************************************************************/
 
-pub fn get_digest(title: &str) -> Digest {
-    md5::compute(title).into()
-}
-
 /*
  * To determine the target worker:-
- *     convert digest from [u8, 16] to u64 (discard the top 128 bits)
- *     do a boolean AND between the worker_id and the (number-of-tasks - 1)
- *     convert that into a u32
+ *     convert digest from [u8, 2] to u16 (discard the top 112 bits)
+ *     do a boolean AND between the worker_id and the (foundation.worker_count - 1)
  *     the resulting value is the index into the Vector of TxCommands to which a request should be sent
  */
-pub fn extract_worker_id_from(digest: Digest) -> u32 {
+pub fn extract_worker_id_from(digest: Digest) -> u16 {
+    let mut id = digest[0] + digest[1] << 8;
+    // id & 0
     0
 }

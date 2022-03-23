@@ -413,7 +413,7 @@ fn extract_links_from(parsed: Page) -> FetchResult {
         .map(|link| link.title)
         .collect();
 
-    let digest = entry::get_digest(&parsed.parse.title);
+    let digest = entry::Entry::get_digest(&parsed.parse.title);
     Ok(FetchEntry {
         digest,
         title: parsed.parse.title,
@@ -431,7 +431,7 @@ fn cache_page(contents: &str, path_to_page: Result<PathBuf, io::Error>) {
 }
 
 fn get_cache_directory_from(title: &str) -> Result<PathBuf, io::Error> {
-    let title_digest = entry::get_digest(title);
+    let title_digest = entry::Entry::get_digest(title);
     let mut path_to_page = opt::OPT.get_cache();
     path_to_page.push(format!("{:02x?}", title_digest[2]));
     path_to_page.push(format!("{:02x?}", title_digest[1]));

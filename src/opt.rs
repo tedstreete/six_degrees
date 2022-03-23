@@ -74,7 +74,7 @@ pub struct Opt {
         help = "Number of worker tasks that will be spawned",
         long_help = "If no value is provided here, the number of workers is equal to the number of cores in the system, * 2 rounded down to the nearest power of 2"
     )]
-    workers: Option<usize>,
+    workers: Option<u32>,
 }
 
 lazy_static! {
@@ -107,7 +107,10 @@ impl Opt {
     pub fn get_cores(&self) -> &Option<u64> {
         &self.cores
     }
-    pub fn get_worker_count(&self) -> Option<usize> {
-        self.workers
+    pub fn get_worker_count(&self) -> Option<u32> {
+        match self.workers {
+            Some(workers) => Some(max(workers, u16::MAX as u32)),
+            None => None,
+        }
     }
 }

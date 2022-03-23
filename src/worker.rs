@@ -60,7 +60,7 @@ type RxCommands = Vec<RxCommand>;
 pub async fn new(foundation: &foundation::Foundation) -> (Vec<JoinHandle<()>>, TxCommands) {
     trace!("worker::new");
 
-    let worker_count: usize = match OPT.get_worker_count() {
+    let worker_count: u32 = match OPT.get_worker_count() {
         Some(count) => count,
         None => foundation.get_worker_count().try_into().unwrap(),
     };
@@ -141,7 +141,7 @@ impl Worker {
 
     fn process_request(title: String, response_tx_handle: mpsc::Sender<WorkerResponse>) {
         trace!("worker:process_request for {}", &title);
-        let digest = crate::entry::get_digest(&title);
+        let digest = crate::entry::Entry::get_digest(&title);
 
         // get digest for title
         // can title be handled locally?
