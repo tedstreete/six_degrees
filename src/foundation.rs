@@ -176,7 +176,7 @@ fn raw_workers() -> u32 {
     // worker count cannot exceed 65K workers (16 bits)
     match OPT.get_worker_count() {
         Some(raw_workers) => raw_workers,
-        None => min(system_cores() * 2, u16::MAX.into()) as u32,
+        None => min(system_cores() * 32, u16::MAX.into()) as u32,
     }
 }
 
