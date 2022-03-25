@@ -31,13 +31,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (fetch_service, tx_to_fetch) = fetch::new(&foundation).await;
 
     // *******
+    // Temporary test code starts here
+
     let (response_tx, response_rx): (
         mpsc::Sender<worker::WorkerResponse>,
         mpsc::Receiver<worker::WorkerResponse>,
     ) = mpsc::channel(1024);
     let request = worker::WorkerCommand::Request {
         title: "Railways".to_string(),
-        response_tx_handle: response_tx.clone(),
+        tx_resp: response_tx.clone(),
     };
     let _ = tx_to_workers[0].send(request).await;
 

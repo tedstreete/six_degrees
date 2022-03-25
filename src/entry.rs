@@ -1,8 +1,7 @@
-use crate::foundation;
-
 pub(crate) type Digest = [u8; 16];
 
-pub(crate) struct Entry {
+#[derive(Debug)]
+pub struct Entry {
     digest: Digest,
     outbound_count: u32,
     inbound_count: u32,

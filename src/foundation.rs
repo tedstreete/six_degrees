@@ -34,10 +34,6 @@ impl Foundation {
     //     self.bits_for_workers
     // }
 
-    pub fn get_bitwise_worker_match(&self) -> u16 {
-        self.bitwise_worker_match
-    }
-
     pub fn get_worker_count(&self) -> u32 {
         self.worker_count
     }
@@ -45,10 +41,6 @@ impl Foundation {
     // pub fn get_bits_for_slabs(&self) -> u16 {
     //     self.bits_for_slabs
     // }
-
-    pub fn get_bitwise_slab_match(&self) -> u16 {
-        self.bitwise_slab_match
-    }
 
     pub fn get_slabs_per_worker(&self) -> u32 {
         self.slabs_per_worker
@@ -66,20 +58,6 @@ impl Foundation {
     pub fn get_spare_slab(&self) -> Option<bool> {
         // Don't forget to reduce the spare_slabs count when allocating
         None
-    }
-
-    pub fn extract_worker_id_from(&self, digest: crate::entry::Digest) -> u16 {
-        let mut id: u16 = digest[1].into();
-        id = id << 8;
-        id += digest[0] as u16;
-        id & self.get_bitwise_worker_match()
-    }
-
-    pub fn extract_slab_id_from(&self, digest: crate::entry::Digest) -> u16 {
-        let mut id: u16 = digest[3].into();
-        id = id << 8;
-        id += digest[2] as u16;
-        id & self.get_bitwise_slab_match()
     }
 }
 
@@ -202,21 +180,9 @@ pub mod tests {
     }
 
     #[test]
-    fn test_get_bitwise_worker_match() {
-        let foundation = get_test_foundation();
-        assert_eq!(foundation.get_bitwise_worker_match(), 127);
-    }
-
-    #[test]
     fn test_get_slabs_per_worker() {
         let foundation = get_test_foundation();
         assert_eq!(foundation.get_slabs_per_worker(), 32);
-    }
-
-    #[test]
-    fn test_get_bitwise_slab_match() {
-        let foundation = get_test_foundation();
-        assert_eq!(foundation.get_bitwise_slab_match(), 31);
     }
 
     #[test]
@@ -229,20 +195,6 @@ pub mod tests {
     fn test_spare_slabs() {
         let foundation = get_test_foundation();
         assert_eq!(foundation.spare_slabs.len(), 0);
-    }
-
-    #[test]
-    fn test_extract_worker_id_from() {
-        let foundation = get_test_foundation();
-        let digest = crate::entry::Entry::get_digest("Rail transport");
-        assert_eq!(foundation.extract_worker_id_from(digest), 11);
-    }
-
-    #[test]
-    fn test_extract_slab_id_from() {
-        let foundation = get_test_foundation();
-        let digest = crate::entry::Entry::get_digest("Rail transport");
-        assert_eq!(foundation.extract_slab_id_from(digest), 4);
     }
 
     #[test]

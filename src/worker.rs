@@ -2,19 +2,29 @@ use std::{fmt, sync::mpsc::Receiver};
 
 use sysinfo::{System, SystemExt};
 use tokio::{sync::mpsc, task::JoinHandle};
+use warp::redirect::found;
 
 use crate::entry;
+use crate::entry::Entry;
 use crate::foundation;
+use crate::foundation::Foundation;
+use crate::opt::Opt;
+use crate::opt::OPT;
 
 // ***********************************************************************************************
+
+static MpscBufferSize: usize = 64;
 
 #[derive(Debug)]
 pub enum WorkerCommand {
     End,
+    // Get an entry if it exists
     Request {
         title: String,
-        response_tx_handle: mpsc::Sender<WorkerResponse>,
+        tx_resp: mpsc::Sender<WorkerResponse>,
     },
+    // Add or update an entry
+    Update(Entry),
 }
 
 #[derive(Debug)]
@@ -33,6 +43,8 @@ pub struct Links {
 
 pub struct Worker {
     worker_id: usize,
+    bitwise_worker_match: u16,
+    bitwise_slab_match: u16,
     tx_commands: TxCommands,
     rx_command: RxCommand,
 }
@@ -60,10 +72,27 @@ pub async fn new(foundation: &foundation::Foundation) -> (Vec<JoinHandle<()>>, T
     trace!("worker::new");
 
     let worker_count = foundation.get_worker_count().try_into().unwrap();
+    let mut join_handles: Vec<JoinHandle<()>> = Vec::with_capacity(worker_count);
+    let (tx_commands, mut rx_commands) = init_command_handles(worker_count);
+
+    for (worker_id, rx_command) in rx_commands.drain(..).enumerate() {
+        let worker = Worker {
+            worker_id,
+            tx_commands: tx_commands.clone(),
+            rx_command,
+            bitwise_worker_match: (foundation.get_worker_count() - 1).try_into().unwrap(),
+            bitwise_slab_match: (foundation.get_slabs_per_worker() - 1).try_into().unwrap(),
+        };
+        join_handles.push(tokio::spawn(
+            async move { Worker::worker_service(worker).await },
+        ));
+    }
+    (join_handles, tx_commands)
+}
+
+fn init_command_handles(worker_count: usize) -> (TxCommands, RxCommands) {
     let mut tx_commands: TxCommands = Vec::with_capacity(worker_count);
     let mut rx_commands: RxCommands = Vec::with_capacity(worker_count);
-    let mut join_handles: Vec<JoinHandle<()>> = Vec::with_capacity(worker_count);
-
     // Create the communications mesh. Each worker will hold a Vec with a tx channel to every other
     // worker, and a single tx channel on which it will receive messages from the api service and
     // every other worker service.
@@ -72,15 +101,7 @@ pub async fn new(foundation: &foundation::Foundation) -> (Vec<JoinHandle<()>>, T
         tx_commands.push(tx_command);
         rx_commands.push(rx_command);
     }
-
-    for (worker_id, rx_command) in rx_commands.drain(..).enumerate() {
-        join_handles.push(Worker::new_worker(
-            worker_id,
-            tx_commands.clone(),
-            rx_command,
-        ));
-    }
-    (join_handles, tx_commands)
+    (tx_commands, rx_commands)
 }
 
 pub async fn shut_down(
@@ -94,26 +115,9 @@ pub async fn shut_down(
 }
 
 impl Worker {
-    fn new_worker(
-        worker_id: usize,
-        //foundation: &foundation::Foundation,
-        tx_commands: TxCommands,
-        rx_command: RxCommand,
-    ) -> JoinHandle<()> {
-        let worker = Worker {
-            worker_id,
-            tx_commands,
-            rx_command,
-        };
-        tokio::spawn(async move { Worker::worker_service(worker).await })
-    }
-
     async fn worker_service(mut worker: Worker) {
         trace!("worker::worker_service: Spawned worker_service");
-        let (response_tx, response_rx): (
-            mpsc::Sender<WorkerResponse>,
-            mpsc::Receiver<WorkerResponse>,
-        ) = mpsc::channel(worker.tx_commands.len());
+
         loop {
             use WorkerCommand::*;
 
@@ -123,11 +127,13 @@ impl Worker {
                 worker.worker_id, &worker_command
             );
             match worker_command {
-                Request {
-                    title,
-                    response_tx_handle,
-                } => Worker::process_request(title, response_tx_handle),
+                Request { title, tx_resp } => {
+                    let digest = entry::Entry::get_digest(&title);
+                    let id = worker.extract_worker_id_from(digest);
+                    Worker::process_request(title, tx_resp)
+                }
                 End => break,
+                Update(_) => todo!(),
             }
         }
         debug!("Worker {} exiting...", worker.worker_id);
@@ -136,6 +142,11 @@ impl Worker {
     fn process_request(title: String, response_tx_handle: mpsc::Sender<WorkerResponse>) {
         trace!("worker:process_request for {}", &title);
         let digest = crate::entry::Entry::get_digest(&title);
+
+        let (rc_tx, rc_rx): (mpsc::Sender<WorkerResponse>, mpsc::Receiver<WorkerResponse>) =
+            mpsc::channel(MpscBufferSize);
+
+        response_tx_handle.send(WorkerResponse::Fetch);
 
         // get digest for title
         // can title be handled locally?
@@ -155,6 +166,20 @@ impl Worker {
         //    no:  Send "not found" on response_tx_handle
         //         Send async request to fetch for the page
         //         Add page to slab when fetch responds
+    }
+
+    fn extract_worker_id_from(&self, digest: crate::entry::Digest) -> u16 {
+        let mut id: u16 = digest[1].into();
+        id = id << 8;
+        id += digest[0] as u16;
+        id & self.bitwise_worker_match
+    }
+
+    fn extract_slab_id_from(&self, digest: crate::entry::Digest) -> u16 {
+        let mut id: u16 = digest[3].into();
+        id = id << 8;
+        id += digest[2] as u16;
+        id & self.bitwise_slab_match
     }
 }
 
@@ -202,10 +227,8 @@ impl fmt::Display for WorkerCommand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let msg = match self {
             WorkerCommand::End => "End".to_string(),
-            WorkerCommand::Request {
-                title,
-                response_tx_handle: _,
-            } => format!("Request:: Title: {}", title),
+            WorkerCommand::Request { title, tx_resp } => format!("Request:: Title: {}", title),
+            WorkerCommand::Update(_) => todo!(),
         };
         write!(f, "{}", msg)
     }
@@ -226,13 +249,54 @@ mod tests {
         let (mut join_handles, mut tx_handles) =
             new(&foundation::tests::get_test_foundation()).await;
 
-        assert_eq!(join_handles.len(), 16);
+        assert_eq!(join_handles.len(), 128);
         for tx_handle in tx_handles.drain(..) {
             tx_handle.send(WorkerCommand::End).await.unwrap();
         }
 
         for join_handle in join_handles.drain(..) {
             tokio::try_join!(join_handle).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_extract_worker_id_from() {
+        let worker = get_test_worker();
+        let digest = crate::entry::Entry::get_digest("Rail transport");
+        assert_eq!(worker.extract_worker_id_from(digest), 11);
+    }
+
+    #[test]
+    fn test_extract_slab_id_from() {
+        let worker = get_test_worker();
+        let digest = crate::entry::Entry::get_digest("Rail transport");
+        assert_eq!(worker.extract_slab_id_from(digest), 4);
+    }
+
+    #[test]
+    fn test_bitwise_worker_match() {
+        let worker = get_test_worker();
+        assert_eq!(worker.bitwise_worker_match, 127);
+    }
+
+    #[test]
+    fn test_get_bitwise_slab_match() {
+        let worker = get_test_worker();
+        assert_eq!(worker.bitwise_slab_match, 31);
+    }
+
+    fn get_test_worker() -> Worker {
+        let foundation = foundation::tests::get_test_foundation();
+        let worker_count = foundation.get_worker_count().try_into().unwrap();
+
+        let (tx_commands, mut rx_commands) = init_command_handles(worker_count);
+
+        Worker {
+            worker_id: 1,
+            tx_commands: tx_commands,
+            rx_command: rx_commands.pop().unwrap(),
+            bitwise_worker_match: (foundation.get_worker_count() - 1).try_into().unwrap(),
+            bitwise_slab_match: (foundation.get_slabs_per_worker() - 1).try_into().unwrap(),
         }
     }
 }
