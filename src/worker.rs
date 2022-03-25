@@ -27,7 +27,7 @@ pub enum WorkerCommand {
     Update(Entry),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum WorkerResponse {
     Links, // inbound and outbound links from page in slab
     Fetch, // page is not in slab. Fetching from local cache or wikipedia.com
@@ -83,6 +83,7 @@ pub async fn new(foundation: &foundation::Foundation) -> (Vec<JoinHandle<()>>, T
             bitwise_worker_match: (foundation.get_worker_count() - 1).try_into().unwrap(),
             bitwise_slab_match: (foundation.get_slabs_per_worker() - 1).try_into().unwrap(),
         };
+        trace!("Spawning worker {}", worker_id);
         join_handles.push(tokio::spawn(
             async move { Worker::worker_service(worker).await },
         ));
@@ -90,12 +91,12 @@ pub async fn new(foundation: &foundation::Foundation) -> (Vec<JoinHandle<()>>, T
     (join_handles, tx_commands)
 }
 
+// Create the communications mesh. Each worker will hold a Vec with a tx channel to every other
+// worker, and a single tx channel on which it will receive messages from the api service and
+// every other worker service.
 fn init_command_handles(worker_count: usize) -> (TxCommands, RxCommands) {
     let mut tx_commands: TxCommands = Vec::with_capacity(worker_count);
     let mut rx_commands: RxCommands = Vec::with_capacity(worker_count);
-    // Create the communications mesh. Each worker will hold a Vec with a tx channel to every other
-    // worker, and a single tx channel on which it will receive messages from the api service and
-    // every other worker service.
     for _ in 0..worker_count {
         let (tx_command, rx_command) = mpsc::channel(worker_count);
         tx_commands.push(tx_command);
@@ -130,7 +131,7 @@ impl Worker {
                 Request { title, tx_resp } => {
                     let digest = entry::Entry::get_digest(&title);
                     let id = worker.extract_worker_id_from(digest);
-                    Worker::process_request(title, tx_resp)
+                    Worker::process_request(title, tx_resp).await
                 }
                 End => break,
                 Update(_) => todo!(),
@@ -139,14 +140,14 @@ impl Worker {
         debug!("Worker {} exiting...", worker.worker_id);
     }
 
-    fn process_request(title: String, response_tx_handle: mpsc::Sender<WorkerResponse>) {
+    async fn process_request(title: String, response_tx_handle: mpsc::Sender<WorkerResponse>) {
         trace!("worker:process_request for {}", &title);
         let digest = crate::entry::Entry::get_digest(&title);
 
         let (rc_tx, rc_rx): (mpsc::Sender<WorkerResponse>, mpsc::Receiver<WorkerResponse>) =
             mpsc::channel(MpscBufferSize);
 
-        response_tx_handle.send(WorkerResponse::Fetch);
+        let rxrsp = response_tx_handle.send(WorkerResponse::Fetch).await;
 
         // get digest for title
         // can title be handled locally?
@@ -285,16 +286,37 @@ mod tests {
         assert_eq!(worker.bitwise_slab_match, 31);
     }
 
+    #[tokio::test]
+    async fn test_worker_fetch_response() {
+        let target_worker = get_test_worker();
+        let tx_to_target = target_worker.tx_commands[0].clone();
+        let join_handle = tokio::spawn(async move { Worker::worker_service(target_worker).await });
+
+        let (response_tx, mut response_rx): (
+            mpsc::Sender<WorkerResponse>,
+            mpsc::Receiver<WorkerResponse>,
+        ) = mpsc::channel(1024);
+        let request = WorkerCommand::Request {
+            title: "Railways".to_string(),
+            tx_resp: response_tx.clone(),
+        };
+
+        let _ = tx_to_target.send(request).await;
+        let response = response_rx.recv().await.unwrap();
+        assert!(response == WorkerResponse::Fetch);
+    }
+
     fn get_test_worker() -> Worker {
         let foundation = foundation::tests::get_test_foundation();
         let worker_count = foundation.get_worker_count().try_into().unwrap();
 
         let (tx_commands, mut rx_commands) = init_command_handles(worker_count);
+        let rx_command = rx_commands.swap_remove(0);
 
         Worker {
-            worker_id: 1,
-            tx_commands: tx_commands,
-            rx_command: rx_commands.pop().unwrap(),
+            worker_id: 0,
+            tx_commands,
+            rx_command,
             bitwise_worker_match: (foundation.get_worker_count() - 1).try_into().unwrap(),
             bitwise_slab_match: (foundation.get_slabs_per_worker() - 1).try_into().unwrap(),
         }

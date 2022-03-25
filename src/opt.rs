@@ -109,7 +109,7 @@ impl Opt {
     }
     pub fn get_worker_count(&self) -> Option<u32> {
         match self.workers {
-            Some(workers) => Some(min(workers, u16::MAX as u32)),
+            Some(workers) => Some(min(workers, (u16::MAX as u32) + 1)),
             None => None,
         }
     }

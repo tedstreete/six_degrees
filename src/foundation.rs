@@ -216,4 +216,12 @@ pub mod tests {
     pub fn get_test_foundation() -> Foundation {
         get_foundation_for(8589934, 8, calculate_raw_workers(4))
     }
+
+    pub fn get_mini_test_foundation() -> Foundation {
+        let foundation = get_foundation_for(8589934, 8, calculate_raw_workers(4));
+        Foundation {
+            worker_count: 2,
+            ..foundation
+        }
+    }
 }

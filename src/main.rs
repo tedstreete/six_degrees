@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env::set_var("RUST_LOG", "six_degrees=debug");
+    env::set_var("RUST_LOG", "six_degrees=trace");
     env_logger::init();
 
     info!("Getting {} pages deep", opt::OPT.get_depth());
