@@ -1,0 +1,103 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1404\cocoasubrtf460
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+\margl1440\margr1440\vieww16180\viewh11240\viewkind0
+\deftab720
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\partightenfactor0
+
+\f0\b\fs22 \cf0 Notes\
+\
+Intermediate Pointer list (IP)\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\pardirnatural\partightenfactor0
+
+\b0 \cf0 The Intermediate Pointer list is an hash table of arrays.\
+\
+
+\b HashTable:
+\b0  The hash is determined from the least significant bits of the MD5 associated with the title. A required command line option determines how many bits in the MD5 are significant. The number of entries in the HashTable is given by 2^significantBits\
+
+\b CollisionChain:
+\b0  Each entry in the HashTable is an array of IPEntries. Use a linear search within the CollisionChain to find a particular matching MD5.\
+\
+
+\b Allocation strategy for the size of HashTable and the length of the CollisionChain\
+
+\b0 For a given number of potential IPEntries, there is a trade-off between the size of the HashTable and the length of the CollisionChain. Increasing the HashTable, at the expense of the CollisionChain will reduce the mean time to find a given page, but unless the hash values are absolutely evenly distributed, this will result in greater wasted space, as more potential HashValues will be unused. Conversely, increasing the CollisionChain length at the expense of the HashTable size reduces wasted memory resources, but increases the mean time to find a given page, as more candidate IPEntries will need to be inspected before the target is located.\
+
+\b \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardeftab720\partightenfactor0
+\cf0 Links are unidirectional
+\b0 \expnd0\expndtw0\kerning0
+\
+No need for a fromLinks chain. When we look for paths between the two pages, we\'92ll follow the toLinks from both pages to identify the paths in both directions. In most cases, the two paths will be symmetrical, but occasionally they will be non-symmetrical, or possibly unreachable in one direction.\
+\
+
+\b \kerning1\expnd0\expndtw0 API
+\b0 \expnd0\expndtw0\kerning0
+\
+API protocol uses JSON formatted strings.\
+\
+ - stopServer (1): Stops the server, saving the dataset to a file. Don\'92t exit if the dataset was not saved successfully, unless the forceExit parameter is true\
+	Parameters\
+		0: Method (1 = stopServer)\
+		1: forceExit (boolean) If true, exit even if the dataset save was not successful\
+		2: (optional) filename. If omitted, uses the default location for the dataset\
+	Returns\
+		0: Success\
+		-1: Insufficient space to save dataset\
+\
+ - saveDataset (2): Saves the dataset to a file\
+	Parameters\
+		0: Method (2 = saveDataset)\
+		1: (optional) filename. If omitted, uses the default location for the dataset\
+	Returns\
+		0: Success\
+		-1: Insufficient space to save dataset\
+\
+ - addPage (3): Adds a page to the dataset. If the page already exists, overwrite the existing entry\
+	Parameters\
+		0: Method (3 = addPage)\
+		1: Title (String)\
+		2+: Array of linked titles (String)\
+	Returns \
+		0: success\
+		-1: Insufficient memory\
+		-2: Incorrectly formatted page\
+\
+ - checkPage (4): Checks whether the page exists\
+	Parameters\
+		0: Method (4 = checkPage)\
+		1: Title (String)\
+	Returns:\
+		0: Page doesn't exist\
+		n: the date the page was last updated (String) Seconds since epoch\
+\
+ - 6Degrees (5): Provides all the pages that are within (n) links of this page\
+	Parameters\
+		0: Method (5 = 6Degrees)\
+		1: Title (String)\
+		2: Number of degrees (String)\
+	Returns:\
+		0: + graph of all pages that are within the requested number of degrees\
+		-1: Page doesn't exist\
+		-2: Too many degrees requested. Initially, we'll limit the number of degrees to a maximum of 6. Can revisit this decision later\
+		\
+ - pathsBetween (6): Provides all the possible paths between the two pages\
+	Parameters\
+		0: Method (6 = pathsBetween)\
+		1: Source (String)\
+		1: Target (String)\
+	Returns:\
+		0: + graph of the shortest link(s) between Source and Target\
+		-1: No links were found\
+		-2 :Source doesn't exist\
+		-3: Target doesn't exist\
+\
+\
+JSON libraries\
+https://github.com/udp/json-parser\
+https://github.com/udp/json-builder\
+https://github.com/mnunberg/jsonsl\
+https://github.com/DaveGamble/cJSON\
+http://zserge.com/jsmn.html\
+}

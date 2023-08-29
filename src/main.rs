@@ -6,6 +6,7 @@ extern crate log;
 extern crate serde_derive;
 extern crate tokio;
 
+mod api;
 mod entry;
 mod fetch;
 mod foundation;
@@ -13,13 +14,26 @@ mod opt;
 mod worker;
 
 use std::env;
-
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env::set_var("RUST_LOG", "six_degrees=trace");
     env_logger::init();
+
+    std::panic::set_hook(Box::new(|info| {
+        if let Some(message) = panic_message::get_panic_info_message(info) {
+            eprintln!("{}", message);
+        } else if let Some(location) = info.location() {
+            eprintln!(
+                "Panic occurred in source {} at line {}",
+                location.file(),
+                location.line()
+            );
+        } else {
+            eprintln!("Panic occurred at unspecified location");
+        }
+    }));
 
     info!("Getting {} pages deep", opt::OPT.get_depth());
     info!("Caching to {}", opt::OPT.get_cache().to_string_lossy());
@@ -29,6 +43,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (workers, tx_to_workers) = worker::new(&foundation).await;
     let (fetch_service, tx_to_fetch) = fetch::new(&foundation).await;
+
+    trace!("Starting API");
+    let api_service = api::new(tx_to_fetch.clone()).await;
+    trace!("Started API");
 
     // *******
     // Temporary test code starts here

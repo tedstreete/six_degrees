@@ -13,6 +13,15 @@ use std::{
 #[derive(clap::StructOpt, Debug)]
 #[structopt(name = "six_degrees")]
 pub struct Opt {
+    // Public API address:port
+    #[structopt(
+        short,
+        long,
+        help = "Publish the API on this address:port.",
+        long_help = "Publish the API on this address:port. Address will default to localhost. Port will default to 6457. The colon is a required attribute to specify the port. IPv6 addresses must be surrounded in square brackets following the recommendations in RFC2732"
+    )]
+    api: Option<String>,
+
     // Directory to hold cache files
     #[structopt(
         short,
@@ -47,29 +56,27 @@ pub struct Opt {
     )]
     domain_name: String,
 
+    // Management address:port
+    #[structopt(
+        short,
+        long,
+        help = "Manage the server on on this address:port.",
+        long_help = "Manage the server on this address:port.  Address will default to localhost. Port will default to 6457. The colon is a required attribute to specify the port. IPv6 addresses must be surrounded in square brackets following the recommendations in RFC2732"
+    )]
+    management: Option<String>,
+
     // System memory
     // WARNING: USE WITH CARE. Normal operation will avoid the use of swap space
     // This option is intended for development use, to prevent allocation of all memory,
     // relegating the debugger to usiong swap
     #[structopt(
-        short,
         long,
         help = "The amount of system memory in KB. Use with care to avoid use of swap space"
     )]
     memory: Option<u64>,
 
-    // Port on which the API should be presented
-    #[structopt(
-        short,
-        long,
-        help = "Port on which the API is presented",
-        default_value = "6360"
-    )]
-    port: u32,
-
     // Number of workers
     #[structopt(
-        short,
         long,
         help = "Number of worker tasks that will be spawned",
         long_help = "If no value is provided here, the number of workers is equal to the number of cores in the system, * 2 rounded down to the nearest power of 2"
@@ -95,11 +102,14 @@ impl Opt {
     pub fn get_depth(&self) -> u32 {
         max(1, min(self.depth, 6))
     }
-    pub fn get_port(&self) -> u32 {
-        self.port
+    pub fn get_api(&self) -> &Option<String> {
+        &self.api
     }
     pub fn get_domain_name(&self) -> &str {
         &self.domain_name
+    }
+    pub fn get_management(&self) -> &Option<String> {
+        &self.management
     }
     pub fn get_memory(&self) -> &Option<u64> {
         &self.memory

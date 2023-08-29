@@ -2,13 +2,11 @@ use std::{fmt, sync::mpsc::Receiver};
 
 use sysinfo::{System, SystemExt};
 use tokio::{sync::mpsc, task::JoinHandle};
-use warp::redirect::found;
 
 use crate::entry;
 use crate::entry::Entry;
 use crate::foundation;
 use crate::foundation::Foundation;
-use crate::opt::Opt;
 use crate::opt::OPT;
 
 // ***********************************************************************************************
