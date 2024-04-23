@@ -4,13 +4,13 @@
  *
  *************************************************************************************************/
 
-use clap;
+use clap::Parser;
 use std::{
     cmp::{max, min},
     path::PathBuf,
 };
 
-#[derive(clap::StructOpt, Debug)]
+#[derive(Parser, Debug)]
 #[structopt(name = "six_degrees")]
 pub struct Opt {
     // Public API address:port
