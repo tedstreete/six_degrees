@@ -82,6 +82,17 @@ pub struct Opt {
         long_help = "If no value is provided here, the number of workers is equal to the number of cores in the system, * 2 rounded down to the nearest power of 2"
     )]
     workers: Option<u32>,
+
+    // Fake-hub identifier
+    // TODO: Implement the code to detect a fake-hub
+    #[structopt(
+        short,
+        long,
+        default_value = "200",
+        help = "Threshold of inbound to outbound link ratio to detect fake-hub pages",
+        long_help = "The percentage of inbound to outbound links that is used to determine whether a page should be considered a fake-hub"
+    )]
+    fake_hub: i32,
 }
 
 lazy_static! {
